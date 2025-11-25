@@ -1,0 +1,232 @@
+<?php
+
+namespace App\Http\Controllers\LeaveManagement\Employee;
+
+use App\Http\Controllers\Controller;
+use App\Models\LeaveRequest;
+use App\Models\LeaveType;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
+
+class DashboardController extends Controller
+{
+    public function index()
+    {
+        $user = Auth::user();
+        $currentYear = date('Y');
+
+        // Get leave balances
+        $leaveBalances = $this->getLeaveBalances($user->id, $currentYear);
+        
+        // Get quick stats
+        $quickStats = $this->getQuickStats($user->id, $currentYear);
+        
+        // Get upcoming leaves
+        $upcomingLeaves = $this->getUpcomingLeaves($user->id);
+        
+        // Get recent applications
+        $recentApplications = $this->getRecentApplications($user->id);
+
+        return view('modules.leave-management.employee.dashboard', compact(
+            'leaveBalances',
+            'quickStats',
+            'upcomingLeaves',
+            'recentApplications'
+        ));
+    }
+
+    private function getLeaveBalances($userId, $year)
+    {
+        $leaveTypes = LeaveType::all();
+        $balances = [];
+
+        foreach ($leaveTypes as $type) {
+            $usedDays = LeaveRequest::where('user_id', $userId)
+                ->where('leave_type_id', $type->id)
+                ->where('status', 'approved')
+                ->whereYear('start_date', $year)
+                ->sum('total_days');
+
+            $available = $type->max_days ? ($type->max_days - $usedDays) : null;
+            $percentage = $type->max_days ? min(100, ($usedDays / $type->max_days) * 100) : 100;
+
+            $balances[] = [
+                'type' => $type,
+                'used' => $usedDays,
+                'available' => $available,
+                'max_days' => $type->max_days,
+                'percentage' => $percentage
+            ];
+        }
+
+        return $balances;
+    }
+
+    private function getQuickStats($userId, $year)
+    {
+        // Available annual leave
+        $annualLeave = LeaveType::where('name', 'Annual')->first();
+        $usedAnnual = LeaveRequest::where('user_id', $userId)
+            ->where('leave_type_id', $annualLeave->id)
+            ->where('status', 'approved')
+            ->whereYear('start_date', $year)
+            ->sum('total_days');
+        $availableAnnual = $annualLeave->max_days - $usedAnnual;
+
+        // Pending requests
+        $pendingRequests = LeaveRequest::where('user_id', $userId)
+            ->where('status', 'pending')
+            ->count();
+
+        // Total used this year
+        $totalUsed = LeaveRequest::where('user_id', $userId)
+            ->where('status', 'approved')
+            ->whereYear('start_date', $year)
+            ->sum('total_days');
+
+        return [
+            'available_leave' => $availableAnnual,
+            'pending_requests' => $pendingRequests,
+            'used_this_year' => $totalUsed
+        ];
+    }
+
+    private function getUpcomingLeaves($userId)
+    {
+        return LeaveRequest::with('leaveType')
+            ->where('user_id', $userId)
+            ->where('start_date', '>=', today())
+            ->whereIn('status', ['approved', 'pending'])
+            ->orderBy('start_date')
+            ->limit(3)
+            ->get();
+    }
+
+    private function getRecentApplications($userId)
+    {
+        return LeaveRequest::with('leaveType')
+            ->where('user_id', $userId)
+            ->orderBy('created_at', 'desc')
+            ->limit(5)
+            ->get();
+    }
+
+    public function balance()
+    {
+        // Your existing balance method
+        $user = Auth::user();
+        $currentYear = date('Y');
+
+        // Get all leave types
+        $leaveTypes = LeaveType::all();
+        $leaveBalances = [];
+        $totalUsed = 0;
+        $totalMaxDays = 0;
+
+        // Calculate balances for each leave type
+        foreach ($leaveTypes as $leaveType) {
+            $usedDays = LeaveRequest::where('user_id', $user->id)
+                ->where('leave_type_id', $leaveType->id)
+                ->where('status', 'approved')
+                ->whereYear('start_date', $currentYear)
+                ->sum('total_days');
+
+            $available = $leaveType->max_days ? ($leaveType->max_days - $usedDays) : null;
+            
+            $leaveBalances[] = [
+                'leave_type' => $leaveType,
+                'used' => $usedDays,
+                'available' => $available,
+                'max_days' => $leaveType->max_days
+            ];
+
+            if ($leaveType->max_days) {
+                $totalUsed += $usedDays;
+                $totalMaxDays += $leaveType->max_days;
+            }
+        }
+
+        // Calculate totals
+        $totalRemaining = $totalMaxDays - $totalUsed;
+        $totalAvailable = $totalMaxDays;
+
+        // Get monthly usage data
+        $monthlyUsage = $this->getMonthlyUsage($user->id, $currentYear);
+        $maxMonthlyUsage = max(array_column($monthlyUsage, 'days')) ?: 1;
+
+        // Get recent leave requests (all statuses for history)
+        $recentLeaves = LeaveRequest::with('leaveType')
+            ->where('user_id', $user->id)
+            ->orderBy('start_date', 'desc')
+            ->limit(5)
+            ->get();
+
+        // Calculate projections
+        $projections = $this->calculateProjections($user->id, $currentYear, $leaveTypes);
+
+        return view('modules.leave-management.employee.leave-balance', compact(
+            'leaveBalances',
+            'totalUsed',
+            'totalAvailable',
+            'totalRemaining',
+            'monthlyUsage',
+            'maxMonthlyUsage',
+            'recentLeaves',
+            'projections'
+        ));
+    }
+
+    private function getMonthlyUsage($userId, $year)
+    {
+        $months = [];
+        for ($i = 1; $i <= 12; $i++) {
+            $days = LeaveRequest::where('user_id', $userId)
+                ->where('status', 'approved')
+                ->whereYear('start_date', $year)
+                ->whereMonth('start_date', $i)
+                ->sum('total_days');
+
+            $months[] = [
+                'month' => date('M', mktime(0, 0, 0, $i, 1)),
+                'days' => $days
+            ];
+        }
+
+        return $months;
+    }
+
+    private function calculateProjections($userId, $year, $leaveTypes)
+    {
+        // Get annual leave type
+        $annualLeave = $leaveTypes->where('name', 'Annual')->first();
+        
+        if (!$annualLeave) {
+            return [
+                'annual_balance' => 0,
+                'carry_over' => 0,
+                'recommended_usage' => 0
+            ];
+        }
+
+        $usedAnnual = LeaveRequest::where('user_id', $userId)
+            ->where('leave_type_id', $annualLeave->id)
+            ->where('status', 'approved')
+            ->whereYear('start_date', $year)
+            ->sum('total_days');
+
+        $remainingAnnual = $annualLeave->max_days - $usedAnnual;
+        
+        // Simple projection logic
+        $monthsRemaining = 12 - date('n');
+        $projectedBalance = max(0, $remainingAnnual);
+        $carryOver = min(5, $projectedBalance); // Assume max 5 days carry over
+        $recommendedUsage = max(0, $projectedBalance - $carryOver);
+
+        return [
+            'annual_balance' => $projectedBalance,
+            'carry_over' => $carryOver,
+            'recommended_usage' => $recommendedUsage
+        ];
+    }
+}
