@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y \
     git \
     unzip \
     libzip-dev \
+    nodejs \
+    npm \
     && docker-php-ext-install zip mysqli pdo pdo_mysql
 
 # Install Composer
@@ -31,8 +33,18 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction
 # Copy the rest of the application
 COPY . /var/www/html
 
+# Install Node dependencies and build assets
+RUN npm install && npm run build
+
 # Permissions
 RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 755 /var/www/html
+    && chmod -R 755 /var/www/html \
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-EXPOSE 80
+# Copy start script
+COPY start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
+
+EXPOSE 10000
+
+CMD ["/usr/local/bin/start.sh"]
