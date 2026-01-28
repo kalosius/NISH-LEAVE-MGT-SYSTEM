@@ -1,21 +1,25 @@
-# Use official PHP with Apache
 FROM php:8.2-apache
 
-# Enable Apache rewrite module (very important for PHP frameworks)
+# Enable Apache rewrite
 RUN a2enmod rewrite
 
-# Install common PHP extensions (add more if needed)
+# Install PHP extensions
 RUN docker-php-ext-install mysqli pdo pdo_mysql
 
-# Set working directory
+# Set Apache document root to Laravel public folder
+ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
+
+RUN sed -ri 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' \
+    /etc/apache2/sites-available/*.conf \
+    /etc/apache2/apache2.conf
+
 WORKDIR /var/www/html
 
-# Copy project files into Apache root
+# Copy project files
 COPY . /var/www/html/
 
-# Fix permissions
+# Permissions
 RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html
 
-# Expose port 80
 EXPOSE 80
